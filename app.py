@@ -1,4 +1,5 @@
 # app.py - Optimización de rutas con PSO para transporte de peces
+# Incluye simulación de restricciones (punto bloqueado)
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,38 +7,50 @@ import random
 import streamlit as st
 
 # ============================================
-# 1. FUNCIÓN DE DISTANCIA
+# 1. FUNCIONES DE DISTANCIA
 # ============================================
 
 def distancia_euclidiana(p1, p2):
     """Calcula distancia entre dos puntos (x,y)"""
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-def distancia_total(ruta, puntos):
-    """Calcula distancia total de una ruta (incluyendo regreso a compañía)"""
+def distancia_total(ruta, puntos, punto_bloqueado=None):
+    """
+    Calcula distancia total de una ruta
+    Si punto_bloqueado no es None, lo excluye de la ruta (restricción)
+    """
+    # Filtrar punto bloqueado si existe
+    if punto_bloqueado is not None:
+        ruta_filtrada = [p for p in ruta if p != punto_bloqueado]
+    else:
+        ruta_filtrada = ruta
+    
+    if len(ruta_filtrada) == 0:
+        return float('inf')
+    
     # Desde compañía (0,0) al primer cliente
-    dist = distancia_euclidiana((0,0), puntos[ruta[0]])
+    dist = distancia_euclidiana((0,0), puntos[ruta_filtrada[0]])
     
     # Entre clientes consecutivos
-    for i in range(len(ruta) - 1):
-        dist += distancia_euclidiana(puntos[ruta[i]], puntos[ruta[i+1]])
+    for i in range(len(ruta_filtrada) - 1):
+        dist += distancia_euclidiana(puntos[ruta_filtrada[i]], puntos[ruta_filtrada[i+1]])
     
     # Desde el último cliente de regreso a compañía
-    dist += distancia_euclidiana(puntos[ruta[-1]], (0,0))
+    dist += distancia_euclidiana(puntos[ruta_filtrada[-1]], (0,0))
     
     return dist
 
 # ============================================
-# 2. GENERAR PUNTOS DE ENTREGA (CLIENTES)
+# 2. GENERAR PUNTOS DE ENTREGA
 # ============================================
 
-def generar_puntos(n):
+def generar_puntos(n, semilla=42):
     """Genera n puntos aleatorios de entrega (coordenadas entre 1 y 10)"""
-    random.seed(42)  # Para que siempre salgan los mismos (reproducible)
+    random.seed(semilla)
     return [(random.randint(1,10), random.randint(1,10)) for _ in range(n)]
 
 # ============================================
-# 3. ALGORITMO PSO
+# 3. OPERADOR DE CRUCE (CROSSOVER)
 # ============================================
 
 def crossover(padre1, padre2):
@@ -57,10 +70,14 @@ def crossover(padre1, padre2):
             hijo[pos] = padre2[i]
     return hijo
 
-def pso(puntos, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
+# ============================================
+# 4. ALGORITMO PSO (con soporte para restricciones)
+# ============================================
+
+def pso(puntos, punto_bloqueado=None, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
     """
     Algoritmo de Optimización por Enjambre de Partículas (PSO)
-    Adaptado para problema de rutas (TSP)
+    Adaptado para problema de rutas (TSP) con opción de restricción
     """
     num_clientes = len(puntos)
     
@@ -73,7 +90,7 @@ def pso(puntos, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
     
     # Mejor posición personal (pbest)
     pbest = particulas.copy()
-    fitness_pbest = [distancia_total(ruta, puntos) for ruta in pbest]
+    fitness_pbest = [distancia_total(ruta, puntos, punto_bloqueado) for ruta in pbest]
     
     # Mejor posición global (gbest)
     gbest_idx = np.argmin(fitness_pbest)
@@ -85,8 +102,6 @@ def pso(puntos, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
     
     # Bucle principal del algoritmo
     for iteracion in range(iteraciones):
-        nuevas_particulas = []
-        
         for i, particula in enumerate(particulas):
             nueva_ruta = particula.copy()
             
@@ -99,8 +114,8 @@ def pso(puntos, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
                 nueva_ruta = crossover(nueva_ruta, gbest)
             
             # Evaluar nueva ruta
-            fitness_nueva = distancia_total(nueva_ruta, puntos)
-            fitness_actual = distancia_total(particula, puntos)
+            fitness_nueva = distancia_total(nueva_ruta, puntos, punto_bloqueado)
+            fitness_actual = distancia_total(particula, puntos, punto_bloqueado)
             
             if fitness_nueva < fitness_actual:
                 particula = nueva_ruta
@@ -116,33 +131,45 @@ def pso(puntos, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
                         gbest = particula.copy()
                         fitness_gbest = fitness_actual
         
-        nuevas_particulas.append(particula)
         historial_fitness.append(fitness_gbest)
     
     return gbest, fitness_gbest, historial_fitness
 
 # ============================================
-# 4. VISUALIZACIÓN DE LA RUTA
+# 5. VISUALIZACIÓN DE LA RUTA
 # ============================================
 
-def graficar_ruta(ruta, puntos, titulo="Ruta óptima"):
-    """Genera gráfico de la ruta"""
+def graficar_ruta(ruta, puntos, punto_bloqueado=None, titulo="Ruta óptima"):
+    """Genera gráfico de la ruta (marcando punto bloqueado si existe)"""
     fig, ax = plt.subplots(figsize=(10, 6))
     
+    # Filtrar punto bloqueado para la ruta
+    if punto_bloqueado is not None:
+        ruta_filtrada = [p for p in ruta if p != punto_bloqueado]
+    else:
+        ruta_filtrada = ruta
+    
     # Coordenadas de la ruta (compañía + clientes + regreso)
-    coords = [(0, 0)] + [puntos[i] for i in ruta] + [(0, 0)]
+    coords = [(0, 0)] + [puntos[i] for i in ruta_filtrada] + [(0, 0)]
     xs, ys = zip(*coords)
     
     # Dibujar ruta
-    ax.plot(xs, ys, 'o-', linewidth=2, markersize=8, color='blue')
+    ax.plot(xs, ys, 'o-', linewidth=2, markersize=8, color='blue', label='Ruta')
     
     # Marcar compañía
     ax.scatter(0, 0, c='red', s=200, marker='s', label='Compañía (0,0)')
     
     # Marcar clientes
     for i, (x, y) in enumerate(puntos):
+        color = 'gray' if punto_bloqueado is not None and i == punto_bloqueado else 'green'
+        marker = 'x' if punto_bloqueado is not None and i == punto_bloqueado else 'o'
+        size = 150 if punto_bloqueado is not None and i == punto_bloqueado else 100
+        ax.scatter(x, y, c=color, s=size, marker=marker)
         ax.annotate(f'C{i+1}', (x, y), fontsize=9, ha='center', va='bottom')
-        ax.scatter(x, y, c='green', s=100)
+    
+    # Leyenda adicional si hay bloqueado
+    if punto_bloqueado is not None:
+        ax.scatter([], [], c='gray', s=100, marker='x', label=f'Cliente {punto_bloqueado+1} (BLOQUEADO)')
     
     ax.set_title(titulo)
     ax.set_xlabel("Coordenada X")
@@ -153,7 +180,7 @@ def graficar_ruta(ruta, puntos, titulo="Ruta óptima"):
     return fig
 
 # ============================================
-# 5. INTERFAZ WEB CON STREAMLIT
+# 6. INTERFAZ WEB CON STREAMLIT
 # ============================================
 
 st.set_page_config(page_title="Optimización de Rutas - PSO", layout="wide")
@@ -170,20 +197,50 @@ iteraciones = st.sidebar.slider("Número de iteraciones", 50, 500, 200)
 c1 = st.sidebar.slider("Coeficiente cognitivo (c1)", 0.5, 2.5, 1.5)
 c2 = st.sidebar.slider("Coeficiente social (c2)", 0.5, 2.5, 1.5)
 
+# ============================================
+# SECCIÓN DE RESTRICCIONES (NUEVO)
+# ============================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("🚧 Simulación de restricciones")
+
+modo_restriccion = st.sidebar.radio(
+    "Tipo de simulación",
+    ["Sin restricción", "Bloquear un cliente"]
+)
+
+punto_bloqueado = None
+if modo_restriccion == "Bloquear un cliente":
+    # Generar puntos temporalmente para saber cuántos clientes hay
+    puntos_temp = generar_puntos(num_clientes, semilla=42)
+    cliente_bloqueado = st.sidebar.selectbox(
+        "Seleccione el cliente a bloquear",
+        options=list(range(1, num_clientes + 1)),
+        format_func=lambda x: f"Cliente {x}"
+    )
+    punto_bloqueado = cliente_bloqueado - 1  # Convertir a índice 0-based
+    st.sidebar.info(f"🚫 Cliente {cliente_bloqueado} será excluido de la ruta")
+
 # Botón para ejecutar
 if st.button("🚀 Ejecutar simulación", type="primary"):
     with st.spinner("🐟 Los peces están encontrando la mejor ruta..."):
         # Generar puntos
-        puntos = generar_puntos(num_clientes)
+        puntos = generar_puntos(num_clientes, semilla=42)
         
-        # Calcular distancia inicial (ruta aleatoria)
+        # Calcular distancia inicial (ruta aleatoria SIN considerar bloqueado para comparación justa)
         ruta_inicial = list(range(num_clientes))
         random.shuffle(ruta_inicial)
-        distancia_inicial = distancia_total(ruta_inicial, puntos)
+        
+        # Para la distancia inicial, si hay bloqueado, calculamos la ruta sin ese punto
+        if punto_bloqueado is not None:
+            ruta_inicial_sin_bloqueado = [p for p in ruta_inicial if p != punto_bloqueado]
+            distancia_inicial = distancia_total(ruta_inicial_sin_bloqueado, puntos, punto_bloqueado)
+        else:
+            distancia_inicial = distancia_total(ruta_inicial, puntos, punto_bloqueado)
         
         # Ejecutar PSO
         mejor_ruta, distancia_final, historial = pso(
             puntos, 
+            punto_bloqueado=punto_bloqueado,
             num_particulas=num_particulas, 
             iteraciones=iteraciones,
             c1=c1, 
@@ -191,7 +248,7 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
         )
         
         # Calcular mejora
-        mejora = ((distancia_inicial - distancia_final) / distancia_inicial) * 100
+        mejora = ((distancia_inicial - distancia_final) / distancia_inicial) * 100 if distancia_inicial > 0 else 0
         
         # Mostrar resultados
         col1, col2, col3 = st.columns(3)
@@ -199,9 +256,15 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
         col2.metric("✅ Distancia optimizada", f"{distancia_final:.1f}")
         col3.metric("📈 Mejora", f"{mejora:.1f}%", delta=f"{-mejora:.1f}%")
         
+        # Mostrar información de restricción si aplica
+        if punto_bloqueado is not None:
+            st.warning(f"🚫 Modo restricción activo: Cliente {punto_bloqueado+1} ha sido bloqueado y excluido de la ruta")
+        
         # Mostrar gráfico de la ruta
-        st.subheader("🗺️ Ruta óptima encontrada")
-        fig_ruta = graficar_ruta(mejor_ruta, puntos, f"Ruta optimizada - {mejora:.1f}% de mejora")
+        titulo_ruta = f"Ruta optimizada - {mejora:.1f}% de mejora"
+        if punto_bloqueado is not None:
+            titulo_ruta += f" (Cliente {punto_bloqueado+1} bloqueado)"
+        fig_ruta = graficar_ruta(mejor_ruta, puntos, punto_bloqueado, titulo_ruta)
         st.pyplot(fig_ruta)
         
         # Mostrar gráfico de convergencia
@@ -210,7 +273,7 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
         ax.plot(historial, color='green', linewidth=2)
         ax.set_xlabel("Iteración")
         ax.set_ylabel("Distancia total")
-        ax.set_title("Convergencia del PSO")
+        ax.set_title("Convergencia del PSO" + (" con restricción" if punto_bloqueado else ""))
         ax.grid(True, alpha=0.3)
         st.pyplot(fig_conv)
         
@@ -218,3 +281,4 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
 
 st.markdown("---")
 st.caption("Proyecto de Computación Bioinspirada - Optimización de rutas para transporte de peces")
+st.caption("Incluye simulación de restricciones (bloqueo de clientes)")
