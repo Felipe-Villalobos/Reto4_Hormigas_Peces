@@ -1,5 +1,6 @@
 # app.py - Optimización de rutas con PSO para transporte de peces
 # Incluye simulación de restricciones (punto bloqueado)
+# Incluye visualización de ESTIGMERMIA (señal ambiental)
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -77,41 +78,50 @@ def crossover(padre1, padre2):
 def pso(puntos, punto_bloqueado=None, num_particulas=20, iteraciones=200, c1=1.5, c2=1.5):
     """
     Algoritmo de Optimización por Enjambre de Partículas (PSO)
-    Adaptado para problema de rutas (TSP) con opción de restricción
+    
+    REGLAS DE ASOCIACIÓN IMPLEMENTADAS:
+    - ESTIGMERMIA (interacción indirecta): gbest actúa como "señal ambiental"
+    - INTERACCIÓN SOCIAL DIRECTA: componente social (c2) acerca partículas a gbest
+    - MEMORIA INDIVIDUAL: componente cognitiva (c1) y pbest
     """
     num_clientes = len(puntos)
     
-    # Inicializar partículas (rutas aleatorias)
+    # INICIALIZACIÓN: exploración inicial (sin asociaciones previas)
     particulas = []
     for _ in range(num_particulas):
         ruta = list(range(num_clientes))
         random.shuffle(ruta)
         particulas.append(ruta)
     
-    # Mejor posición personal (pbest)
+    # MEMORIA INDIVIDUAL: cada partícula guarda su mejor experiencia (pbest)
     pbest = particulas.copy()
     fitness_pbest = [distancia_total(ruta, puntos, punto_bloqueado) for ruta in pbest]
     
-    # Mejor posición global (gbest)
+    # ESTIGMERMIA: la mejor ruta global (gbest) es la "señal ambiental"
     gbest_idx = np.argmin(fitness_pbest)
     gbest = pbest[gbest_idx].copy()
     fitness_gbest = fitness_pbest[gbest_idx]
     
-    # Historial de mejora
+    # Historial de mejora (para el gráfico de convergencia)
     historial_fitness = [fitness_gbest]
+    
+    # Historial de pbest para visualizar ESTIGMERMIA (señal ambiental)
+    historial_pbest = [pbest[i].copy() for i in range(num_particulas)]
     
     # Bucle principal del algoritmo
     for iteracion in range(iteraciones):
         for i, particula in enumerate(particulas):
             nueva_ruta = particula.copy()
             
-            # Componente cognitiva (influencia de pbest)
-            if random.random() < c1/3:
-                nueva_ruta = crossover(nueva_ruta, pbest[i])
-            
-            # Componente social (influencia de gbest)
+            # INTERACCIÓN SOCIAL DIRECTA: la partícula sigue a la mejor del grupo (gbest)
+            # En la naturaleza: los peces se alinean con sus vecinos
             if random.random() < c2/3:
                 nueva_ruta = crossover(nueva_ruta, gbest)
+            
+            # MEMORIA INDIVIDUAL: la partícula recuerda su mejor experiencia (pbest)
+            # En la naturaleza: un pez recuerda dónde encontró comida
+            if random.random() < c1/3:
+                nueva_ruta = crossover(nueva_ruta, pbest[i])
             
             # Evaluar nueva ruta
             fitness_nueva = distancia_total(nueva_ruta, puntos, punto_bloqueado)
@@ -121,19 +131,21 @@ def pso(puntos, punto_bloqueado=None, num_particulas=20, iteraciones=200, c1=1.5
                 particula = nueva_ruta
                 fitness_actual = fitness_nueva
                 
-                # Actualizar pbest
+                # Actualizar MEMORIA INDIVIDUAL (pbest)
                 if fitness_actual < fitness_pbest[i]:
                     pbest[i] = particula.copy()
                     fitness_pbest[i] = fitness_actual
                     
-                    # Actualizar gbest
+                    # Actualizar ESTIGMERMIA (gbest es la señal ambiental)
                     if fitness_actual < fitness_gbest:
                         gbest = particula.copy()
                         fitness_gbest = fitness_actual
         
+        # Guardar el estado actual de pbest para visualizar estigmergia
+        historial_pbest.append([pbest[i].copy() for i in range(num_particulas)])
         historial_fitness.append(fitness_gbest)
     
-    return gbest, fitness_gbest, historial_fitness
+    return gbest, fitness_gbest, historial_fitness, historial_pbest
 
 # ============================================
 # 5. VISUALIZACIÓN DE LA RUTA
@@ -180,13 +192,58 @@ def graficar_ruta(ruta, puntos, punto_bloqueado=None, titulo="Ruta óptima"):
     return fig
 
 # ============================================
-# 6. INTERFAZ WEB CON STREAMLIT
+# 6. VISUALIZACIÓN DE ESTIGMERMIA (CALOR DE FEROMONAS VIRTUAL)
+# ============================================
+
+def graficar_calor_estigmergia(historial_pbest, puntos, iteracion_actual):
+    """
+    Visualiza la "estigmergia" del sistema: cómo las mejores rutas individuales
+    (pbest) crean una "señal ambiental" que guía al enjambre.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Crear un mapa de calor basado en la frecuencia con que cada cliente
+    # aparece en buenas posiciones dentro de las rutas pbest
+    calor = np.zeros(len(puntos))
+    
+    # Recorrer todas las partículas en la iteración actual
+    for ruta in historial_pbest:
+        for i, cliente in enumerate(ruta):
+            # Los clientes al inicio de la ruta (cerca de la compañía) tienen más influencia
+            peso = 1.0 / (i + 1)
+            calor[cliente] += peso
+    
+    # Normalizar
+    if np.max(calor) > 0:
+        calor = calor / np.max(calor)
+    
+    # Dibujar puntos con tamaño proporcional a la "intensidad de estigmergia"
+    for i, (x, y) in enumerate(puntos):
+        size = 50 + (calor[i] * 200)
+        color = plt.cm.hot(calor[i])
+        ax.scatter(x, y, c=[color], s=size, edgecolors='black', linewidth=1)
+        ax.annotate(f'C{i+1}', (x, y), fontsize=9, ha='center', va='bottom')
+    
+    # Marcar compañía
+    ax.scatter(0, 0, c='blue', s=200, marker='s', label='Compañía (0,0)')
+    
+    ax.set_title(f"Estigmergia - Intensidad de señal ambiental (Iteración {iteracion_actual})")
+    ax.set_xlabel("Coordenada X")
+    ax.set_ylabel("Coordenada Y")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    return fig
+
+# ============================================
+# 7. INTERFAZ WEB CON STREAMLIT
 # ============================================
 
 st.set_page_config(page_title="Optimización de Rutas - PSO", layout="wide")
 
 st.title("🐟 Optimización de Rutas para Transporte de Peces")
 st.markdown("### Algoritmo bioinspirado en cardúmenes (PSO)")
+st.markdown("**Reglas de asociación implementadas:** Estigmergia (señal ambiental) + Interacción social directa + Memoria individual")
 
 # Sidebar con parámetros
 st.sidebar.header("⚙️ Parámetros del algoritmo")
@@ -194,11 +251,11 @@ st.sidebar.header("⚙️ Parámetros del algoritmo")
 num_clientes = st.sidebar.slider("Número de puntos de entrega", 5, 20, 12)
 num_particulas = st.sidebar.slider("Número de partículas", 10, 50, 20)
 iteraciones = st.sidebar.slider("Número de iteraciones", 50, 500, 200)
-c1 = st.sidebar.slider("Coeficiente cognitivo (c1)", 0.5, 2.5, 1.5)
-c2 = st.sidebar.slider("Coeficiente social (c2)", 0.5, 2.5, 1.5)
+c1 = st.sidebar.slider("Coeficiente cognitivo (c1) - Memoria individual", 0.5, 2.5, 1.5)
+c2 = st.sidebar.slider("Coeficiente social (c2) - Interacción social", 0.5, 2.5, 1.5)
 
 # ============================================
-# SECCIÓN DE RESTRICCIONES (NUEVO)
+# SECCIÓN DE RESTRICCIONES
 # ============================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("🚧 Simulación de restricciones")
@@ -210,14 +267,13 @@ modo_restriccion = st.sidebar.radio(
 
 punto_bloqueado = None
 if modo_restriccion == "Bloquear un cliente":
-    # Generar puntos temporalmente para saber cuántos clientes hay
     puntos_temp = generar_puntos(num_clientes, semilla=42)
     cliente_bloqueado = st.sidebar.selectbox(
         "Seleccione el cliente a bloquear",
         options=list(range(1, num_clientes + 1)),
         format_func=lambda x: f"Cliente {x}"
     )
-    punto_bloqueado = cliente_bloqueado - 1  # Convertir a índice 0-based
+    punto_bloqueado = cliente_bloqueado - 1
     st.sidebar.info(f"🚫 Cliente {cliente_bloqueado} será excluido de la ruta")
 
 # Botón para ejecutar
@@ -226,19 +282,18 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
         # Generar puntos
         puntos = generar_puntos(num_clientes, semilla=42)
         
-        # Calcular distancia inicial (ruta aleatoria SIN considerar bloqueado para comparación justa)
+        # Calcular distancia inicial
         ruta_inicial = list(range(num_clientes))
         random.shuffle(ruta_inicial)
         
-        # Para la distancia inicial, si hay bloqueado, calculamos la ruta sin ese punto
         if punto_bloqueado is not None:
             ruta_inicial_sin_bloqueado = [p for p in ruta_inicial if p != punto_bloqueado]
             distancia_inicial = distancia_total(ruta_inicial_sin_bloqueado, puntos, punto_bloqueado)
         else:
             distancia_inicial = distancia_total(ruta_inicial, puntos, punto_bloqueado)
         
-        # Ejecutar PSO
-        mejor_ruta, distancia_final, historial = pso(
+        # Ejecutar PSO (ahora devuelve 4 valores)
+        mejor_ruta, distancia_final, historial_fitness, historial_pbest = pso(
             puntos, 
             punto_bloqueado=punto_bloqueado,
             num_particulas=num_particulas, 
@@ -250,35 +305,58 @@ if st.button("🚀 Ejecutar simulación", type="primary"):
         # Calcular mejora
         mejora = ((distancia_inicial - distancia_final) / distancia_inicial) * 100 if distancia_inicial > 0 else 0
         
-        # Mostrar resultados
+        # ============================================
+        # MOSTRAR RESULTADOS
+        # ============================================
+        st.subheader("📊 Resultados de la simulación")
+        
         col1, col2, col3 = st.columns(3)
         col1.metric("📏 Distancia inicial", f"{distancia_inicial:.1f}")
         col2.metric("✅ Distancia optimizada", f"{distancia_final:.1f}")
         col3.metric("📈 Mejora", f"{mejora:.1f}%", delta=f"{-mejora:.1f}%")
         
-        # Mostrar información de restricción si aplica
         if punto_bloqueado is not None:
             st.warning(f"🚫 Modo restricción activo: Cliente {punto_bloqueado+1} ha sido bloqueado y excluido de la ruta")
         
-        # Mostrar gráfico de la ruta
+        # ============================================
+        # GRÁFICO DE LA RUTA ÓPTIMA
+        # ============================================
+        st.subheader("🗺️ Ruta óptima encontrada")
         titulo_ruta = f"Ruta optimizada - {mejora:.1f}% de mejora"
         if punto_bloqueado is not None:
             titulo_ruta += f" (Cliente {punto_bloqueado+1} bloqueado)"
         fig_ruta = graficar_ruta(mejor_ruta, puntos, punto_bloqueado, titulo_ruta)
         st.pyplot(fig_ruta)
         
-        # Mostrar gráfico de convergencia
-        st.subheader("📉 Evolución del algoritmo")
+        # ============================================
+        # GRÁFICO DE CONVERGENCIA
+        # ============================================
+        st.subheader("📉 Evolución del algoritmo (convergencia)")
         fig_conv, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(historial, color='green', linewidth=2)
+        ax.plot(historial_fitness, color='green', linewidth=2)
         ax.set_xlabel("Iteración")
         ax.set_ylabel("Distancia total")
         ax.set_title("Convergencia del PSO" + (" con restricción" if punto_bloqueado else ""))
         ax.grid(True, alpha=0.3)
         st.pyplot(fig_conv)
         
+        # ============================================
+        # VISUALIZACIÓN DE ESTIGMERMIA (NUEVO)
+        # ============================================
+        st.subheader("🧬 Estigmergia - Señal ambiental del enjambre")
+        st.caption("""
+        **¿Qué muestra este gráfico?**  
+        Los clientes con colores **más cálidos (rojo/naranja)** y **círculos más grandes** son aquellos que aparecen con mayor frecuencia en las mejores rutas individuales (pbest).  
+        Esto representa la **señal ambiental** (estigmergia) que emerge del enjambre y guía a las partículas hacia soluciones óptimas.
+        """)
+        
+        # Usar el último historial de pbest (después de todas las iteraciones)
+        ultimo_historial_pbest = historial_pbest[-1]
+        fig_estigmergia = graficar_calor_estigmergia(ultimo_historial_pbest, puntos, iteraciones)
+        st.pyplot(fig_estigmergia)
+        
         st.success("✨ Simulación completada con éxito")
 
 st.markdown("---")
 st.caption("Proyecto de Computación Bioinspirada - Optimización de rutas para transporte de peces")
-st.caption("Incluye simulación de restricciones (bloqueo de clientes)")
+st.caption("Incluye simulación de restricciones (bloqueo de clientes) y visualización de ESTIGMERMIA")
